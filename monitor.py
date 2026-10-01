@@ -79,7 +79,8 @@ def snapshot() -> dict:
     for cells in rows:
         if len(cells) < 2:
             continue
-        label = re.sub(r"\d+$", "", " ".join(cells[0].split()))  # drop footnote digits
+        raw = cells[0].split(" Definition:")[0]  # strip tooltip definition text
+        label = re.sub(r"\d+$", "", " ".join(raw.split()))  # drop footnote digits
         if label in TRACKED and label not in data:
             data[label] = " ".join(cells[1].split())
 
