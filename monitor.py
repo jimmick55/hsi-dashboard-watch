@@ -7,6 +7,7 @@ ignored, so normal price ticks never trigger an alert.
 Env vars: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, optional STATE_FILE (default state.json)
 Usage:    python monitor.py          # check once
           python monitor.py --test   # just send a test message
+          python monitor.py --debug  # print what was parsed, send nothing
 """
 import html
 import json
@@ -36,11 +37,19 @@ TRACKED = [
 ]
 PLACEHOLDERS = {"", "—", "--", "-", "N/A"}
 
-# Page counts as loaded once the HYPE Tokens Held row has a number in it
-READY_JS = """() => [...document.querySelectorAll('tr')].some(r =>
-  r.cells.length > 1 &&
-  r.cells[0].textContent.includes('HYPE Tokens Held') &&
-  /\\d/.test(r.cells[1].textContent))"""
+REQUIRED = ["HYPE Tokens Held (M)", "Date of last update"]
+
+# Page counts as loaded once "HYPE Tokens Held (M)" is followed by a number in the
+# rendered text (works whether the page uses <table>, CSS grid, or <div>s)
+READY_JS = r"""() => /HYPE Tokens Held \(M\)\d?\s+[(\-$]*\d/.test(document.body.innerText)"""
+VALUE_RE = r"(\(?-?\$?\d[\d,]*(?:\.\d+)?\)?[MBK%]?)"
+
+
+def extract(text: str, label: str):
+    """Value that follows `label` (optional footnote digit) in rendered text."""
+    pattern = r"(?<!Adjusted )" + re.escape(label) + r"\d?[ \t]*[\t\n:][ \t\n]*" + VALUE_RE
+    m = re.search(pattern, text)
+    return m.group(1) if m else None
 
 
 def send_telegram(text: str) -> None:
@@ -58,41 +67,42 @@ def send_telegram(text: str) -> None:
             sys.exit(f"Telegram error: {r.read()!r}")
 
 
-def snapshot() -> dict:
+def snapshot(debug: bool = False) -> dict:
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
         browser = p.chromium.launch()
-        page = browser.new_page()
-        page.goto(URL, wait_until="domcontentloaded", timeout=60_000)
+        page = browser.new_page(viewport={"width": 1400, "height": 2400})
+        page.goto(URL, wait_until="networkidle", timeout=90_000)
         try:
-            page.wait_for_function(READY_JS, timeout=45_000)
+            page.wait_for_function(READY_JS, timeout=60_000)
         except Exception:
             pass  # validated below
-        page.wait_for_timeout(2_000)
-        rows = page.eval_on_selector_all(
-            "tr", "rs => rs.map(r => [...r.cells].map(c => c.textContent))")
-        body = page.evaluate("document.body.textContent")
+        page.wait_for_timeout(3_000)
+        text = page.evaluate("document.body.innerText")  # visible, rendered text only
         browser.close()
 
     data = {}
-    for cells in rows:
-        if len(cells) < 2:
-            continue
-        raw = cells[0].split(" Definition:")[0]  # strip tooltip definition text
-        label = re.sub(r"\d+$", "", " ".join(raw.split()))  # drop footnote digits
-        if label in TRACKED and label not in data:
-            data[label] = " ".join(cells[1].split())
+    for label in TRACKED:
+        value = extract(text, label)
+        if value:
+            data[label] = value
+    for key in ("Date of last update", "Date of next update"):
+        m = re.search(key + r":?\s*(\d{1,2}/\d{1,2}/\d{4})", text)
+        if m:
+            data[key] = m.group(1)
 
-    m = re.search(r"Date of last update:\s*([0-9/.\-]+)", body)
-    if m:
-        data["Date of last update"] = m.group(1)
-    m = re.search(r"Date of next update:\s*([0-9/.\-]+)", body)
-    if m:
-        data["Date of next update"] = m.group(1)
+    if debug or any(k not in data for k in REQUIRED):
+        print("---- rendered text near tracked labels ----")
+        for line_no, line in enumerate(text.splitlines()):
+            if any(lbl.split(" (")[0].split(": ")[-1] in line for lbl in TRACKED + REQUIRED):
+                print(f"{line_no:5d}: {line!r}")
+        print("---- parsed ----")
+        print(json.dumps(data, indent=2))
 
-    if not any(re.search(r"\d", data.get(k, "")) for k in TRACKED):
-        sys.exit(f"Dashboard didn't load properly, skipping. Got: {data}")
+    missing = [k for k in REQUIRED if k not in data]
+    if missing:
+        sys.exit(f"Dashboard didn't load properly (missing {missing}); no alert sent.")
     return data
 
 
@@ -100,6 +110,10 @@ def main() -> None:
     if "--test" in sys.argv:
         send_telegram("✅ Test message from your HSI dashboard watcher.")
         print("Test message sent.")
+        return
+
+    if "--debug" in sys.argv:
+        snapshot(debug=True)
         return
 
     new = snapshot()
@@ -127,7 +141,7 @@ def main() -> None:
     lines = ["📊 <b>HSI dashboard data updated</b>", ""]
     for k, before, after in changes:
         lines.append(f"• {html.escape(k)}: {html.escape(before)} → <b>{html.escape(after)}</b>")
-    lines += ["", f'<a href="{URL}">Open dashboard</a>']
+    lines += ["", f'<a href="{URL}">Open dashboard</a>"]
     send_telegram("\n".join(lines))
 
     merged = {**old, **{k: v for k, v in new.items() if v not in PLACEHOLDERS}}
