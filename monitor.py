@@ -73,7 +73,11 @@ def snapshot(debug: bool = False) -> dict:
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page(viewport={"width": 1400, "height": 2400})
-        page.goto(URL, wait_until="networkidle", timeout=90_000)
+        page.goto(URL, wait_until="load", timeout=90_000)
+        try:  # live price feeds may keep the network busy forever; don't depend on idle
+            page.wait_for_load_state("networkidle", timeout=20_000)
+        except Exception:
+            pass
         try:
             page.wait_for_function(READY_JS, timeout=60_000)
         except Exception:
@@ -126,7 +130,7 @@ def main() -> None:
             "👀 Now watching the HSI dashboard.\n"
             f"Last update: <b>{html.escape(new.get('Date of last update', '?'))}</b>\n"
             f"HYPE held: <b>{html.escape(new.get('HYPE Tokens Held (M)', '?'))}M</b>\n"
-            f'<a href="{URL}">Open dashboard</a>')
+            '<a href="' + URL + '">Open dashboard</a>')
         return
 
     changes = [
@@ -141,7 +145,7 @@ def main() -> None:
     lines = ["📊 <b>HSI dashboard data updated</b>", ""]
     for k, before, after in changes:
         lines.append(f"• {html.escape(k)}: {html.escape(before)} → <b>{html.escape(after)}</b>")
-    lines += ["", f'<a href="{URL}">Open dashboard</a>"]
+    lines += ["", '<a href="' + URL + '">Open dashboard</a>']
     send_telegram("\n".join(lines))
 
     merged = {**old, **{k: v for k, v in new.items() if v not in PLACEHOLDERS}}
