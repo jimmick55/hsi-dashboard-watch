@@ -41,7 +41,7 @@ REQUIRED = ["HYPE Tokens Held (M)", "Date of last update"]
 
 # Page counts as loaded once "HYPE Tokens Held (M)" is followed by a number in the
 # rendered text (works whether the page uses <table>, CSS grid, or <div>s)
-READY_JS = r"""() => /HYPE Tokens Held \(M\)[a-z\d]*\s+[(\-$]*\d/.test(document.body.innerText)"""
+READY_JS = r"""() => /HYPE Tokens Held \(M\)[a-z\d]*[\s\S]*?\d/.test(document.body.innerText)"""
 VALUE_RE = r"(\(?-?\$?\d[\d,]*(?:\.\d+)?\)?[MBK%]?)"
 
 
@@ -53,10 +53,10 @@ def extract(text: str, label: str):
     ``Less: Cash From Operations (6.8)``.  The label may carry a trailing
     footnote digit (``Common Shares1``) that must be stripped before matching.
     """
-    # Strip optional trailing footnote digits from the label, then allow any
-    # whitespace (spaces, tabs, newlines) between the label and the value.
+    # Strip optional trailing footnote digits OR tooltip markers (e.g. 'i')
+    # from the label, then allow any whitespace between label and value.
     base = re.escape(label)
-    pattern = r"(?<!Adjusted )" + base + r"\d?[ \t]*\s+" + VALUE_RE
+    pattern = r"(?<!Adjusted )" + base + r"[a-z\d]*[ \t]*\s+" + VALUE_RE
     m = re.search(pattern, text)
     return m.group(1) if m else None
 
