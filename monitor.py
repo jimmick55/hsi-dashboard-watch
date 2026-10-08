@@ -46,8 +46,17 @@ VALUE_RE = r"(\(?-?\$?\d[\d,]*(?:\.\d+)?\)?[MBK%]?)"
 
 
 def extract(text: str, label: str):
-    """Value that follows `label` (optional footnote digit) in rendered text."""
-    pattern = r"(?<!Adjusted )" + re.escape(label) + r"[a-z\d]*[ \t]*[\t\n:][ \t\n]*" + VALUE_RE
+    """Value that follows `label` (optional footnote digit) in rendered text.
+
+    The dashboard renders label and value on the same line separated by
+    whitespace, e.g. ``Net Asset Value $1,872.9`` or
+    ``Less: Cash From Operations (6.8)``.  The label may carry a trailing
+    footnote digit (``Common Shares1``) that must be stripped before matching.
+    """
+    # Strip optional trailing footnote digits from the label, then allow any
+    # whitespace (spaces, tabs, newlines) between the label and the value.
+    base = re.escape(label)
+    pattern = r"(?<!Adjusted )" + base + r"\d?[ \t]*\s+" + VALUE_RE
     m = re.search(pattern, text)
     return m.group(1) if m else None
 
